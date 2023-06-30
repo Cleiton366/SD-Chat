@@ -34,7 +34,7 @@ def generate_self_signed_cert():
         x509.NameAttribute(NameOID.COMMON_NAME, u"localhost"),
     ])
     cert = x509.CertificateBuilder().subject_name(
-    subject
+        subject
     ).issuer_name(
         issuer
     ).public_key(
@@ -50,16 +50,21 @@ def generate_self_signed_cert():
         critical=False,
     ).sign(private_key, hashes.SHA256(), default_backend())
 
+    # Save private key to a file
+    private_key_filename = "private.key"  # Specify the desired shorter filename
+    with open(private_key_filename, "wb") as f:
+        f.write(private_key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.PKCS8,
+            encryption_algorithm=serialization.NoEncryption()
+        ))
 
-    # Convert private key and certificate to PEM format
-    private_key_pem = private_key.private_bytes(
-        encoding=serialization.Encoding.PEM,
-        format=serialization.PrivateFormat.PKCS8,
-        encryption_algorithm=serialization.NoEncryption()
-    )
-    cert_pem = cert.public_bytes(encoding=serialization.Encoding.PEM)
+    # Save certificate to a file
+    cert_filename = "certificate.crt"  # Specify the desired shorter filename
+    with open(cert_filename, "wb") as f:
+        f.write(cert.public_bytes(encoding=serialization.Encoding.PEM))
 
-    return private_key_pem, cert_pem
+    return private_key_filename, cert_filename
 
 def handle_client(connection, address):
     print(f"[NEW CONNECTION] {address} connected.")
