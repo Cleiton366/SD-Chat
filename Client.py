@@ -2,6 +2,9 @@ import socket
 import threading
 import ssl
 import datetime
+import json
+import jwt
+from dotenv import dotenv_values
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives import hashes
@@ -16,6 +19,13 @@ DISCONNECT_MESSAGE = "!Disconnect"
 SERVER = socket.gethostbyname(socket.gethostname())
 ADDRESS = (SERVER, PORT)
 USER_NAME = ""
+config = dotenv_values(".env")
+SECRET_KEY = config['SECRET_KEY']
+
+def generate_token(username):
+    payload = {"username": username}
+    token = jwt.encode(payload, SECRET_KEY, algorithm="HS256")
+    return token
 
 def generate_self_signed_cert():
     # Generate a new private key
@@ -84,6 +94,23 @@ def handle_messages(client_socket):
             print("Error:", str(e))
             break
 
+def handle_auth(client):
+    print("Trying to authenticate...")
+    token = generate_token(USER_NAME)
+    auth_message = {
+        "action": "authenticate",
+        "token": token.encode()
+    }
+    
+    # Convert bytes values in the auth_message dictionary to strings
+    auth_message_str = {k: v.decode() if isinstance(v, bytes) else v for k, v in auth_message.items()}
+
+    # Serialize the updated dictionary to JSON
+    auth_message_json = json.dumps(auth_message_str)
+
+    # Encode as bytes before sending
+    client.send(auth_message_json.encode())
+
 def start():
     #GENERATING self-sign certificates for encrypted connection
     private_key, cert = generate_self_signed_cert()
@@ -95,6 +122,8 @@ def start():
     client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     client = context.wrap_socket(client, server_hostname=ADDRESS[0])
     client.connect(ADDRESS)
+
+    handle_auth(client)
 
     thread = threading.Thread(target=handle_messages, args=(client,))
     thread.start()
@@ -109,9 +138,7 @@ def start():
             break
         send(client, newMsg)
 
-print("Before chatting, what is your name:")
-user_name = input()
-USER_NAME = user_name
+USER_NAME = username = input("Before chatting, enter your username: ")
 print("Name Saved, good chatting :)")
 
 start()
