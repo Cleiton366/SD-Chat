@@ -2,6 +2,9 @@ import socket
 import threading
 import ssl
 import datetime
+import json
+import jwt
+from dotenv import dotenv_values
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives import hashes
@@ -16,6 +19,8 @@ ADDRESS = (SERVER, PORT)
 FORMAT = 'utf-8'
 DISCONNECT_MESSAGE = "!Disconnect"
 CLIENTS = []
+config = dotenv_values(".env")
+SECRET_KEY = config['SECRET_KEY']
 
 def generate_self_signed_cert():
     # Generate a new private key
@@ -66,9 +71,31 @@ def generate_self_signed_cert():
 
     return private_key_filename, cert_filename
 
+def verify_token(token):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
+        return payload["username"]
+    except jwt.InvalidTokenError:
+        return None
+
+def handle_auth(client):
+    auth_data = client.recv(1024).decode()
+    auth_message = json.loads(auth_data)
+
+    token = auth_message.get("token")
+    username = verify_token(token)
+
+    if not username:
+        print("Invalid token. Closing the connection.")
+        client.close()
+        return
+
 def handle_client(connection, address):
     print(f"[NEW CONNECTION] {address} connected.")
     CLIENTS.append(connection)
+
+    handle_auth(connection)
+    connection.send("Server: Client authenticated".encode(FORMAT))
 
     connected = True
     while connected:
