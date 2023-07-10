@@ -1,9 +1,11 @@
 import socket
+import time
 import threading
 import ssl
 import datetime
 import json
 import jwt
+import uuid
 from dotenv import dotenv_values
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -21,6 +23,11 @@ ADDRESS = (SERVER, PORT)
 USER_NAME = ""
 config = dotenv_values(".env")
 SECRET_KEY = config['SECRET_KEY']
+
+MESSAGE_SENT = "Message successfully sent"
+last_message_sent = True
+message_sent_time = time.time()
+last_message = ""
 
 def generate_token(username):
     payload = {"username": username}
@@ -78,18 +85,44 @@ def generate_self_signed_cert():
 
 
 def send(client, msg):
+    global last_message
+    global last_message_sent
+
     message = msg.encode(FORMAT)
     user_name = USER_NAME.encode(FORMAT)
-    client.send(message)
-    client.send(user_name)
+    message_sent_time = time.time()
+
+    last_message = msg
+
+    if not last_message == DISCONNECT_MESSAGE:
+        last_message_sent = False
+
+    try:
+        #raise socket.error("Forçando um erro")
+        client.send(message)
+        client.send(user_name)
+    except socket.error as e:
+        print(f"A error as ocurred! Error: {e}")
+    except socket.timeout as e:
+        print(f"A timeout error as ocurred! Error: {e}")
 
 def handle_messages(client_socket):
+    global last_message_sent
+    threading.Thread(target=check_unconfirmed_messages, args=(client_socket,)).start()
     while True:
         try:
             message = client_socket.recv(1024)
             if not message:
                 break
-            print(message.decode())
+            messageDecode = message.decode()
+            if messageDecode == MESSAGE_SENT:
+                last_message_sent = True
+            if messageDecode == "Connection closed":
+                last_message_sent = True
+                print(messageDecode)
+                return
+                
+            print(messageDecode)
         except Exception as e:
             print("Error:", str(e))
             break
@@ -111,6 +144,16 @@ def handle_auth(client):
     # Encode as bytes before sending
     client.send(auth_message_json.encode())
 
+def check_unconfirmed_messages(client):
+    while True:
+        if time.time() - message_sent_time > 5:
+            if not last_message_sent:
+                print("Trying again.")
+                global last_message
+                client.send(last_message.encode(FORMAT))
+                client.send(USER_NAME.encode(FORMAT))
+        time.sleep(0.1)
+
 def start():
     #GENERATING self-sign certificates for encrypted connection
     private_key, cert = generate_self_signed_cert()
@@ -130,13 +173,13 @@ def start():
 
     connected = True
     while connected:
-        newMsg = input()
-        if(newMsg == DISCONNECT_MESSAGE):
-            send(client, DISCONNECT_MESSAGE)
-            connected = False
-            client.close()
-            break
-        send(client, newMsg)
+        if last_message_sent:
+            newMsg = input()
+            if(newMsg == DISCONNECT_MESSAGE):
+                send(client, DISCONNECT_MESSAGE)
+                connected = False
+                break
+            send(client, newMsg)
 
 USER_NAME = username = input("Before chatting, enter your username: ")
 print("Name Saved, good chatting :)")
