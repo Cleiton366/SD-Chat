@@ -24,7 +24,8 @@ config = dotenv_values(".env")
 SECRET_KEY = config['SECRET_KEY']
 
 MESSAGE_SENT = "Message successfully sent"
-messages_not_sent = []
+messages_queue = []
+show_prints_request_response = True
 
 def generate_self_signed_cert():
     # Generate a new private key
@@ -99,48 +100,84 @@ def handle_client(connection, address):
     CLIENTS.append(connection)
 
     handle_auth(connection)
-    connection.send("Server: Client authenticated".encode(FORMAT))
+    response = {
+        "origin": "server",
+        "status": "success",
+        "message": "Client authenticated"
+    }
+    if show_prints_request_response:
+        print(response)
+    connection.send((json.dumps(response)).encode(FORMAT))
+
+    responseJoined = {
+        "origin": "server",
+        "status": "success",
+        "message": "Someone has joined"
+    }
+    send_message(connection, responseJoined)
 
     connected = True
     while connected:
-        msg = connection.recv(HEADER).decode(FORMAT)
-        user_name = connection.recv(HEADER).decode(FORMAT)
-        if msg == DISCONNECT_MESSAGE:
-            connection.send(("Connection closed").encode(FORMAT))
-            CLIENTS.remove(connection)
-            connected = False
-            break
-        send_message(connection, msg, user_name)
-
+        request = connection.recv(1024).decode()
+        try:
+            request = json.loads(request)
+            print(request)
+            if request["message"] == DISCONNECT_MESSAGE:
+                user_name = request["user_name"]
+                response = {
+                    "origin": "server",
+                    "status": "success",
+                    "message": "Connection closed"
+                }
+                response = json.dumps(response)
+                connection.send((response).encode(FORMAT))
+                responseQuit = {
+                    "origin": "server",
+                    "status": "success",
+                    "message": f"User {user_name} has disconnected"
+                }
+                send_message(connection, responseQuit)
+                CLIENTS.remove(connection)
+                connected = False
+                return
+            send_message(connection, request)
+        except:
+            pass
     connection.close()
 
-def check_unconfirmed_messages():
-    global messages_not_sent
+def queue_send_messages():
+    global messages_queue
     while True:
-        new_messages_not_sent = []
-        for client, data, sender_client in messages_not_sent:
+        new_messages_queue = []
+        for client, data, sender_client in messages_queue:
+            if show_prints_request_response:
+                print(f"data: {data}")
             try:
-                client.send(data)
-                sender_client.send(MESSAGE_SENT.encode(FORMAT))
-            except:
-                print("Oops! Something went wrong!")
-                new_messages_not_sent.append((client, data, sender_client))
-        messages_not_sent = new_messages_not_sent.copy()
+                client.send(json.dumps(data).encode())
+                response = {
+                    "origin": "server",
+                    "status": "success",
+                    "message": MESSAGE_SENT
+                }
+                sender_client.send(json.dumps(response).encode())
+            except Exception as e:
+                print(f"Oops! Something went wrong!: {e}")
+                new_messages_queue.append((client, data, sender_client))
+        messages_queue = new_messages_queue.copy()
         time.sleep(0.1)
 
-def send_message(sender_client, message, sender_user_name):
-    msg = sender_user_name + ": " + message
-    data = msg.encode(FORMAT)
+def send_message(sender_client, data):
     for index,(client) in enumerate(CLIENTS):
         if client != sender_client:
-            try:
-                #raise socket.error("Forçando um erro")
-                client.send(data)
-                sender_client.send(MESSAGE_SENT.encode(FORMAT))
-            except socket.error as e:
-                messages_not_sent.append((client, data, sender_client))
+            messages_queue.append((client, data, sender_client))
     if index < 1:
-        sender_client.send(MESSAGE_SENT.encode(FORMAT))
+        response = {
+            "origin": "server",
+            "status": "success",
+            "message": "Nobody is online at the moment"
+        }
+        sender_client.send(json.dumps(response).encode())
+
 def start():
     print("[STARTING] server is starting...")
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -152,12 +189,12 @@ def start():
     private_key, cert = generate_self_signed_cert()
     context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     context.load_cert_chain(certfile=cert, keyfile=private_key)
-    threading.Thread(target=check_unconfirmed_messages).start()
+    threading.Thread(target=queue_send_messages).start()
     while True:
             connection, address = server.accept()
             client_socket = context.wrap_socket(connection, server_side=True)
             thread = threading.Thread(target=handle_client, args=(client_socket, address))
             thread.start()
-            print(f"[ACTIVE CONNECTIONS] {threading.activeCount() - 2}")
+            print(f"[ACTIVE CONNECTIONS] {threading.active_count() - 2}")
 
 start()
