@@ -6,6 +6,7 @@ import datetime
 import json
 import jwt
 import uuid
+import random
 from dotenv import dotenv_values
 from cryptography import x509
 from cryptography.x509.oid import NameOID
@@ -83,46 +84,54 @@ def generate_self_signed_cert():
 
     return private_key_filename, cert_filename
 
-
 def send(client, msg):
     global last_message
     global last_message_sent
-
-    message = msg.encode(FORMAT)
-    user_name = USER_NAME.encode(FORMAT)
     message_sent_time = time.time()
-
     last_message = msg
-
-    if not last_message == DISCONNECT_MESSAGE:
-        last_message_sent = False
-
     try:
-        #raise socket.error("Forçando um erro")
-        client.send(message)
-        client.send(user_name)
+        if random.randint(0,9) > 4:
+            raise socket.error("Forçando um erro")
+        request = {
+            "origin": "client",
+            "message": msg,
+            "user_name": USER_NAME
+        }
+        request = json.dumps(request)
+        client.send(request.encode())
     except socket.error as e:
         print(f"A error as ocurred! Error: {e}")
+        last_message_sent = False
     except socket.timeout as e:
         print(f"A timeout error as ocurred! Error: {e}")
+        last_message_sent = False
 
 def handle_messages(client_socket):
     global last_message_sent
     threading.Thread(target=check_unconfirmed_messages, args=(client_socket,)).start()
     while True:
         try:
-            message = client_socket.recv(1024)
-            if not message:
-                break
-            messageDecode = message.decode()
-            if messageDecode == MESSAGE_SENT:
-                last_message_sent = True
-            if messageDecode == "Connection closed":
-                last_message_sent = True
-                print(messageDecode)
-                return
+            response = client_socket.recv(1024).decode(FORMAT)
+            try:
+                response = json.loads(response)
+                message = response["message"]
+                if show_prints_request_response:
+                    print(response)
+                if not message:
+                    break
+                if message == MESSAGE_SENT or message == "Nobody is online at the moment":
+                    last_message_sent = True
+                if response["origin"] == "client":    
+                    user_name = response["user_name"]
+                    print(f"{user_name}: {message}")
+                if response["origin"] == "server":
+                    print(f"Server: {message}")
+                    if message == "Connection closed":
+                        last_message_sent = True
+                        return
                 
-            print(messageDecode)
+            except:
+                pass
         except Exception as e:
             print("Error:", str(e))
             break
@@ -145,16 +154,25 @@ def handle_auth(client):
     client.send(auth_message_json.encode())
 
 def check_unconfirmed_messages(client):
+    global last_message_sent
+    global last_message
     while True:
         if time.time() - message_sent_time > 5:
             if not last_message_sent:
                 print("Trying again.")
-                global last_message
-                client.send(last_message.encode(FORMAT))
-                client.send(USER_NAME.encode(FORMAT))
+                request = {
+                    "origin": "client",
+                    "message": last_message,
+                    "user_name": USER_NAME
+                }
+                request = json.dumps(request)
+                client.send(request.encode())
+                if last_message == DISCONNECT_MESSAGE:
+                    break
         time.sleep(0.1)
 
 def start():
+    global last_message_sent
     #GENERATING self-sign certificates for encrypted connection
     private_key, cert = generate_self_signed_cert()
     context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
@@ -175,13 +193,16 @@ def start():
     while connected:
         if last_message_sent:
             newMsg = input()
+            send(client, newMsg)
             if(newMsg == DISCONNECT_MESSAGE):
-                send(client, DISCONNECT_MESSAGE)
+                last_message_sent = False
                 connected = False
                 break
-            send(client, newMsg)
 
 USER_NAME = username = input("Before chatting, enter your username: ")
 print("Name Saved, good chatting :)")
+
+show_prints_request_response = False
+forcar_erros_mandar_mensagem = True
 
 start()
